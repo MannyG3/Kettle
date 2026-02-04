@@ -13,6 +13,7 @@ type PourTeaModalProps = {
   kettleName: string;
   parentPostId?: string;
   replyingTo?: string;
+  onSuccess?: () => void;
 };
 
 export function PourTeaModal({
@@ -22,6 +23,7 @@ export function PourTeaModal({
   kettleName,
   parentPostId,
   replyingTo,
+  onSuccess,
 }: PourTeaModalProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
@@ -100,6 +102,7 @@ export function PourTeaModal({
       setContent("");
       setFile(null);
       onClose();
+      onSuccess?.();
       router.refresh();
     } catch (err) {
       console.error(err);
