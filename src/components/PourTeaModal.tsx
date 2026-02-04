@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, FormEvent, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createSupabaseClient } from "@/lib/supabaseClient";
 import { generateRandomTeaName } from "@/lib/randomTeaName";
@@ -13,7 +12,7 @@ type PourTeaModalProps = {
   kettleName: string;
   parentPostId?: string;
   replyingTo?: string;
-  onSuccess?: () => void;
+  onSuccess?: () => void | Promise<void>;
 };
 
 export function PourTeaModal({
@@ -25,7 +24,6 @@ export function PourTeaModal({
   replyingTo,
   onSuccess,
 }: PourTeaModalProps) {
-  const router = useRouter();
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -102,8 +100,13 @@ export function PourTeaModal({
       setContent("");
       setFile(null);
       onClose();
-      onSuccess?.();
-      router.refresh();
+      
+      // Small delay to ensure Supabase has propagated the insert, then refresh
+      setTimeout(async () => {
+        if (onSuccess) {
+          await onSuccess();
+        }
+      }, 150);
     } catch (err) {
       console.error(err);
       const message =

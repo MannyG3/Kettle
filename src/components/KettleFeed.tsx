@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, memo, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { PourTeaModal } from "@/components/PourTeaModal";
 import { VoteButtons } from "@/components/VoteButtons";
 import { ShareButton } from "@/components/ShareButton";
+import { ReportButton } from "@/components/ReportButton";
+import { useToast } from "@/components/Toast";
 import { timeAgo } from "@/lib/timeAgo";
 import { createSupabaseClient, isSupabaseConfigured } from "@/lib/supabaseClient";
 
@@ -30,6 +32,11 @@ type Post = {
 type KettleFeedProps = {
   kettle: Kettle;
   posts: Post[];
+};
+
+type ExpandedState = {
+  expanded: Set<string>;
+  collapsed: Set<string>;
 };
 
 const container = {
@@ -101,27 +108,53 @@ function PostCard({
   post, 
   kettleId, 
   kettleName,
+  kettleSlug,
   depth = 0,
-  onNewReply
+  onNewReply,
+  expandedState,
+  onToggleExpand,
+  onExpandPost
 }: { 
   post: Post; 
   kettleId: string;
   kettleName: string;
+  kettleSlug: string;
   depth?: number;
   onNewReply?: () => void;
+  expandedState: ExpandedState;
+  onToggleExpand: (postId: string, currentlyExpanded: boolean) => void;
+  onExpandPost: (postId: string) => void;
 }) {
   const [showReplyModal, setShowReplyModal] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(depth < 2); // Auto-expand first 2 levels
+  const [modalKey, setModalKey] = useState(0);
   const identity = post.anonymous_identity || 'Anonymous Tea';
   const directReplyCount = post.replies?.length ?? 0;
   const totalReplyCount = countAllReplies(post);
   const isNested = depth > 0;
   const maxDepth = 5; // Max nesting level for UI
+  
+  // Determine expansion state
+  const isExplicitlyExpanded = expandedState.expanded.has(post.id);
+  const isExplicitlyCollapsed = expandedState.collapsed.has(post.id);
+  
+  // Default: expand first 2 levels automatically
+  const isDefaultExpanded = depth < 2 && directReplyCount > 0;
+  
+  // Final expansion state: explicitly set states take priority, then fall back to default
+  const isExpanded = isExplicitlyExpanded || (isDefaultExpanded && !isExplicitlyCollapsed);
+
+  const handleToggleExpand = () => {
+    onToggleExpand(post.id, isExpanded);
+  };
 
   const handleReplySuccess = () => {
     setShowReplyModal(false);
-    setIsExpanded(true);
-    onNewReply?.();
+    setModalKey(k => k + 1); // Reset modal state
+    // Auto-expand when user adds a reply
+    onExpandPost(post.id);
+    if (onNewReply) {
+      onNewReply();
+    }
   };
 
   return (
@@ -198,7 +231,7 @@ function PostCard({
         {directReplyCount > 0 && (
           <motion.button
             type="button"
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={handleToggleExpand}
             className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200"
             whileHover={{ scale: 1.02 }}
           >
@@ -214,8 +247,11 @@ function PostCard({
 
         {/* Share button */}
         <ShareButton 
-          url={`${typeof window !== 'undefined' ? window.location.origin : ''}/k/${kettleName.toLowerCase().replace(/\s+/g, '-')}#post-${post.id}`}
+          url={`${typeof window !== 'undefined' ? window.location.origin : ''}/k/${kettleSlug}#post-${post.id}`}
         />
+        
+        {/* Report button */}
+        <ReportButton key={`report-${post.id}`} postId={post.id} />
       </div>
 
       {/* Nested Replies - Always visible when expanded */}
@@ -229,13 +265,17 @@ function PostCard({
             transition={{ duration: 0.3 }}
           >
             {post.replies.map((reply) => (
-              <PostCard 
+              <MemoizedPostCard 
                 key={reply.id} 
                 post={reply} 
                 kettleId={kettleId}
                 kettleName={kettleName}
+                kettleSlug={kettleSlug}
                 depth={depth + 1}
                 onNewReply={onNewReply}
+                expandedState={expandedState}
+                onToggleExpand={onToggleExpand}
+                onExpandPost={onExpandPost}
               />
             ))}
           </motion.div>
@@ -244,6 +284,7 @@ function PostCard({
 
       {/* Reply modal */}
       <PourTeaModal
+        key={`reply-modal-${post.id}-${modalKey}`}
         open={showReplyModal}
         onClose={() => setShowReplyModal(false)}
         kettleId={kettleId}
@@ -256,20 +297,89 @@ function PostCard({
   );
 }
 
+// Memoized PostCard for performance
+const MemoizedPostCard = memo(PostCard);
+
 export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
   const router = useRouter();
+  const { showToast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [posts, setPosts] = useState(initialPosts);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Proper React state for expansion tracking
+  const [expandedState, setExpandedState] = useState<ExpandedState>({
+    expanded: new Set(),
+    collapsed: new Set()
+  });
 
-  // Build the nested reply tree
-  const threadedPosts = buildReplyTree(posts);
+  const handleToggleExpand = useCallback((postId: string, currentlyExpanded: boolean) => {
+    setExpandedState(prev => {
+      const newExpanded = new Set(prev.expanded);
+      const newCollapsed = new Set(prev.collapsed);
+      
+      if (currentlyExpanded) {
+        // Currently expanded -> collapse it
+        newExpanded.delete(postId);
+        newCollapsed.add(postId);
+      } else {
+        // Currently collapsed -> expand it
+        newCollapsed.delete(postId);
+        newExpanded.add(postId);
+      }
+      
+      return { expanded: newExpanded, collapsed: newCollapsed };
+    });
+  }, []);
 
-  // Calculate total heat for the kettle
-  const totalHeat = posts.reduce((sum, p) => sum + (p.heat_score ?? 0), 0);
-  const isBoiling = totalHeat >= 100;
-  const totalReplies = posts.filter(p => p.parent_post_id).length;
-  const parentPostCount = posts.filter(p => !p.parent_post_id).length;
+  const handleExpandPost = useCallback((postId: string) => {
+    setExpandedState(prev => {
+      const newExpanded = new Set(prev.expanded);
+      const newCollapsed = new Set(prev.collapsed);
+      newExpanded.add(postId);
+      newCollapsed.delete(postId);
+      return { expanded: newExpanded, collapsed: newCollapsed };
+    });
+  }, []);
+
+  // Build the nested reply tree - memoized for performance
+  const threadedPosts = useMemo(() => buildReplyTree(posts), [posts]);
+
+  // Calculate stats - memoized for performance
+  const { totalHeat, isBoiling, totalReplies, parentPostCount } = useMemo(() => {
+    const heat = posts.reduce((sum, p) => sum + (p.heat_score ?? 0), 0);
+    return {
+      totalHeat: heat,
+      isBoiling: heat >= 100,
+      totalReplies: posts.filter(p => p.parent_post_id).length,
+      parentPostCount: posts.filter(p => !p.parent_post_id).length
+    };
+  }, [posts]);
+
+  // Function to fetch latest posts (silent - no toast)
+  const fetchLatestPosts = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+    
+    try {
+      const supabase = createSupabaseClient();
+      const { data: newPosts, error } = await supabase
+        .from("posts")
+        .select("id, content, image_url, heat_score, anonymous_identity, parent_post_id, created_at")
+        .eq("kettle_id", kettle.id)
+        .order("created_at", { ascending: false });
+      
+      if (error) {
+        console.error('Failed to fetch posts:', error);
+        return;
+      }
+      
+      if (newPosts) {
+        setPosts(newPosts);
+      }
+    } catch (err) {
+      console.error('Error fetching posts:', err);
+    }
+  }, [kettle.id]);
 
   // Real-time subscription for new posts
   useEffect(() => {
@@ -278,26 +388,42 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
     const supabase = createSupabaseClient();
     
     const channel = supabase
-      .channel(`kettle-${kettle.id}`)
+      .channel(`kettle-${kettle.id}-realtime`)
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'INSERT',
           schema: 'public',
           table: 'posts',
           filter: `kettle_id=eq.${kettle.id}`
         },
-        async () => {
-          // Refetch all posts when there's a change
-          const { data: newPosts } = await supabase
-            .from("posts")
-            .select("id, content, image_url, heat_score, anonymous_identity, parent_post_id, created_at")
-            .eq("kettle_id", kettle.id)
-            .order("created_at", { ascending: false });
-          
-          if (newPosts) {
-            setPosts(newPosts);
-          }
+        () => {
+          // Fetch all posts when a new one is inserted
+          fetchLatestPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'posts',
+          filter: `kettle_id=eq.${kettle.id}`
+        },
+        () => {
+          fetchLatestPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'posts',
+          filter: `kettle_id=eq.${kettle.id}`
+        },
+        () => {
+          fetchLatestPosts();
         }
       )
       .subscribe();
@@ -305,7 +431,7 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [kettle.id]);
+  }, [kettle.id, fetchLatestPosts]);
 
   const handleRefresh = useCallback(async () => {
     if (!isSupabaseConfigured()) {
@@ -315,23 +441,16 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
 
     setIsRefreshing(true);
     try {
-      const supabase = createSupabaseClient();
-      const { data: newPosts } = await supabase
-        .from("posts")
-        .select("id, content, image_url, heat_score, anonymous_identity, parent_post_id, created_at")
-        .eq("kettle_id", kettle.id)
-        .order("created_at", { ascending: false });
-      
-      if (newPosts) {
-        setPosts(newPosts);
-      }
+      await fetchLatestPosts();
+      showToast(`Refreshed!`, 'success');
     } catch (error) {
       console.error('Failed to refresh:', error);
+      showToast('Failed to refresh, trying full reload...', 'error');
       router.refresh();
     } finally {
       setIsRefreshing(false);
     }
-  }, [kettle.id, router]);
+  }, [fetchLatestPosts, router, showToast]);
 
   return (
     <motion.div
@@ -458,12 +577,16 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
               </motion.div>
             ) : (
               threadedPosts.map((post) => (
-                <PostCard 
+                <MemoizedPostCard 
                   key={post.id} 
                   post={post}
                   kettleId={kettle.id}
                   kettleName={kettle.name}
-                  onNewReply={handleRefresh}
+                  kettleSlug={kettle.slug}
+                  onNewReply={fetchLatestPosts}
+                  expandedState={expandedState}
+                  onToggleExpand={handleToggleExpand}
+                  onExpandPost={handleExpandPost}
                 />
               ))
             )}
@@ -476,6 +599,7 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
         onClose={() => setIsModalOpen(false)}
         kettleId={kettle.id}
         kettleName={kettle.name}
+        onSuccess={fetchLatestPosts}
       />
     </motion.div>
   );

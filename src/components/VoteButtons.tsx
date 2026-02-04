@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useTransition } from 'react';
 import { motion } from 'framer-motion';
-import { createSupabaseClient, isSupabaseConfigured } from '@/lib/supabaseClient';
+import { isSupabaseConfigured } from '@/lib/supabaseClient';
 
 type VoteButtonsProps = {
   postId: string;
@@ -39,62 +39,75 @@ function setStoredVote(postId: string, vote: VoteState) {
   }
 }
 
+// Optimized vote function using Edge API
+async function submitVote(postId: string, action: 'up' | 'down' | 'remove-up' | 'remove-down'): Promise<number | null> {
+  try {
+    const response = await fetch('/api/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, action }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Vote failed');
+    }
+    
+    const data = await response.json();
+    return data.heat ?? null;
+  } catch (error) {
+    console.error('Vote error:', error);
+    return null;
+  }
+}
+
 export function VoteButtons({ postId, initialHeat, size = 'md' }: VoteButtonsProps) {
   const [heat, setHeat] = useState(initialHeat);
   const [voteState, setVoteState] = useState<VoteState>(null);
-  const [isVoting, setIsVoting] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     const stored = getStoredVotes();
     setVoteState(stored[postId] ?? null);
   }, [postId]);
 
-  const handleVote = useCallback(async (direction: 'up' | 'down') => {
-    if (!isSupabaseConfigured() || isVoting) return;
+  const handleVote = useCallback((direction: 'up' | 'down') => {
+    if (!isSupabaseConfigured() || isPending) return;
 
-    setIsVoting(true);
-    const supabase = createSupabaseClient();
     const currentVote = voteState;
-
-    try {
-      // If clicking same vote, remove it
-      if (currentVote === direction) {
-        // Undo the vote
-        const rpcName = direction === 'up' ? 'decrement_heat' : 'increment_heat';
-        const { data, error } = await supabase.rpc(rpcName, { post_id: postId });
-        
-        if (error) throw error;
-        
-        setHeat(data ?? heat);
-        setVoteState(null);
-        setStoredVote(postId, null);
-      } else {
-        // New vote or changing vote
-        let newHeat = heat;
-
-        // If changing vote, first undo the previous
-        if (currentVote !== null) {
-          const undoRpc = currentVote === 'up' ? 'decrement_heat' : 'increment_heat';
-          const { data } = await supabase.rpc(undoRpc, { post_id: postId });
-          newHeat = data ?? newHeat;
-        }
-
-        // Apply new vote
-        const rpcName = direction === 'up' ? 'increment_heat' : 'decrement_heat';
-        const { data, error } = await supabase.rpc(rpcName, { post_id: postId });
-        
-        if (error) throw error;
-        
-        setHeat(data ?? newHeat);
-        setVoteState(direction);
-        setStoredVote(postId, direction);
-      }
-    } catch (err) {
-      console.error('Vote failed:', err);
-    } finally {
-      setIsVoting(false);
+    
+    // Optimistic update
+    let optimisticHeat = heat;
+    let newVoteState: VoteState = direction;
+    let action: 'up' | 'down' | 'remove-up' | 'remove-down';
+    
+    if (currentVote === direction) {
+      // Removing vote
+      action = direction === 'up' ? 'remove-up' : 'remove-down';
+      optimisticHeat = direction === 'up' ? heat - 1 : heat + 1;
+      newVoteState = null;
+    } else if (currentVote !== null) {
+      // Changing vote
+      action = direction;
+      optimisticHeat = direction === 'up' ? heat + 2 : heat - 2;
+    } else {
+      // New vote
+      action = direction;
+      optimisticHeat = direction === 'up' ? heat + 1 : heat - 1;
     }
-  }, [postId, heat, voteState, isVoting]);
+    
+    // Apply optimistic update immediately
+    setHeat(Math.max(0, optimisticHeat));
+    setVoteState(newVoteState);
+    setStoredVote(postId, newVoteState);
+    
+    // Submit to Edge API in background
+    startTransition(async () => {
+      const serverHeat = await submitVote(postId, action);
+      if (serverHeat !== null) {
+        setHeat(serverHeat);
+      }
+    });
+  }, [postId, heat, voteState, isPending]);
 
   const isBoiling = heat >= 100;
   const sizeClasses = size === 'sm' 
@@ -107,7 +120,7 @@ export function VoteButtons({ postId, initialHeat, size = 'md' }: VoteButtonsPro
         <motion.button
           type="button"
           onClick={() => handleVote('up')}
-          disabled={isVoting}
+          disabled={isPending}
           className={`${sizeClasses} rounded-full font-bold transition-all disabled:opacity-50 ${
             voteState === 'up'
               ? 'bg-neon-green text-charcoal shadow-[0_0_12px_var(--neon-green)]'
@@ -122,7 +135,7 @@ export function VoteButtons({ postId, initialHeat, size = 'md' }: VoteButtonsPro
         <motion.button
           type="button"
           onClick={() => handleVote('down')}
-          disabled={isVoting}
+          disabled={isPending}
           className={`${sizeClasses} rounded-full font-bold transition-all disabled:opacity-50 ${
             voteState === 'down'
               ? 'bg-hot-pink text-white shadow-[0_0_12px_var(--hot-pink)]'
