@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createSupabaseClient } from "@/lib/supabaseClient";
@@ -11,6 +11,8 @@ type PourTeaModalProps = {
   onClose: () => void;
   kettleId: string;
   kettleName: string;
+  parentPostId?: string;
+  replyingTo?: string;
 };
 
 export function PourTeaModal({
@@ -18,6 +20,8 @@ export function PourTeaModal({
   onClose,
   kettleId,
   kettleName,
+  parentPostId,
+  replyingTo,
 }: PourTeaModalProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
@@ -25,12 +29,23 @@ export function PourTeaModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Generate identity once when modal opens (memoized)
+  const generatedIdentity = useMemo(() => generateRandomTeaName(), []);
+
+  const isReply = !!parentPostId;
+  const maxLength = 500;
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (!content.trim()) {
       setError("Spill at least a little tea first.");
+      return;
+    }
+
+    if (content.length > maxLength) {
+      setError(`Keep it under ${maxLength} characters.`);
       return;
     }
 
@@ -65,8 +80,10 @@ export function PourTeaModal({
 
       const { error: insertError } = await supabase.from("posts").insert({
         kettle_id: kettleId,
+        parent_post_id: parentPostId ?? null,
         content: content.trim(),
         image_url: imageUrl,
+        anonymous_identity: generatedIdentity,
         heat_score: 0,
       });
 
@@ -94,6 +111,13 @@ export function PourTeaModal({
     }
   };
 
+  const handleClose = () => {
+    setContent("");
+    setFile(null);
+    setError(null);
+    onClose();
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -103,7 +127,7 @@ export function PourTeaModal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }}
-          onClick={onClose}
+          onClick={handleClose}
         >
           <motion.div
             className="glass-strong relative w-full max-w-md rounded-2xl border border-neon-green/30 p-5 shadow-[0_0_50px_var(--neon-green)]"
@@ -115,7 +139,7 @@ export function PourTeaModal({
           >
             <motion.button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="absolute right-3 top-3 rounded-full glass px-2 py-1 text-xs font-bold text-zinc-400 hover:text-zinc-100"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
@@ -125,49 +149,73 @@ export function PourTeaModal({
 
             <div className="mb-3 space-y-1">
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-neon-green">
-                Pour the Tea
+                {isReply ? '💬 Reply' : 'Pour the Tea'}
               </p>
               <h2 className="text-sm font-bold text-zinc-50">
-                New drop in{" "}
-                <span className="text-neon-green">{kettleName}</span>
+                {isReply ? (
+                  <>Replying to <span className="text-neon-green">{replyingTo}</span></>
+                ) : (
+                  <>New drop in <span className="text-neon-green">{kettleName}</span></>
+                )}
               </h2>
               <p className="text-xs font-medium text-zinc-400">
-                Your identity will appear as something like{" "}
+                Your identity will be{" "}
                 <span className="font-bold text-neon-green">
-                  {generateRandomTeaName()}
-                </span>{" "}
-                inside the thread.
+                  {generatedIdentity}
+                </span>
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-300">
-                  What&apos;s the tea?
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-zinc-300">
+                    What&apos;s the tea?
+                  </label>
+                  <span className={`text-[10px] font-medium ${
+                    content.length > maxLength ? 'text-hot-pink' : 'text-zinc-500'
+                  }`}>
+                    {content.length}/{maxLength}
+                  </span>
+                </div>
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   rows={4}
                   className="w-full rounded-xl border border-white/10 glass p-3 text-sm font-medium text-zinc-100 outline-none transition focus:border-neon-green/50 focus:ring-2 focus:ring-neon-green/30"
-                  placeholder='"My roommate just…"'
+                  placeholder={isReply ? '"I heard that..."' : '"My roommate just…"'}
+                  maxLength={maxLength + 50}
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-300">
-                  Add a receipt (optional)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="block w-full text-xs text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-neon-green/20 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-neon-green hover:file:bg-neon-green/30"
-                />
-                <p className="text-[10px] font-medium text-zinc-500">
-                  We recommend censoring names/handles before uploading.
-                </p>
-              </div>
+              {!isReply && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-300">
+                    Add a receipt (optional)
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-xs text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-neon-green/20 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-neon-green hover:file:bg-neon-green/30"
+                  />
+                  {file && (
+                    <div className="flex items-center gap-2 text-[10px] text-zinc-400">
+                      <span>📎 {file.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFile(null)}
+                        className="text-hot-pink hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-[10px] font-medium text-zinc-500">
+                    We recommend censoring names/handles before uploading.
+                  </p>
+                </div>
+              )}
 
               {error && (
                 <motion.p
@@ -180,17 +228,17 @@ export function PourTeaModal({
               )}
 
               <div className="flex items-center justify-between pt-1">
-                <p className="text-[10px] font-medium text-zinc-500">
+                <p className="text-[10px] font-medium text-zinc-500 max-w-[60%]">
                   Posts are anonymous but still need to follow basic decency.
                 </p>
                 <motion.button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || content.length > maxLength}
                   className="inline-flex items-center gap-2 rounded-full bg-neon-green px-4 py-1.5 text-xs font-bold text-charcoal shadow-[0_0_24px_var(--neon-green)] disabled:cursor-not-allowed disabled:opacity-70"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                 >
-                  {isSubmitting ? "Pouring..." : "Pour the Tea"}
+                  {isSubmitting ? "Pouring..." : isReply ? "Reply" : "Pour the Tea"}
                 </motion.button>
               </div>
             </form>

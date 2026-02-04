@@ -19,6 +19,8 @@ type Post = {
   content: string;
   image_url: string | null;
   heat_score: number | null;
+  anonymous_identity: string | null;
+  parent_post_id: string | null;
   created_at: string;
 };
 
@@ -120,7 +122,7 @@ async function fetchKettleData(
 
     const { data: posts } = await supabase
       .from("posts")
-      .select("id, content, image_url, heat_score, created_at")
+      .select("id, content, image_url, heat_score, anonymous_identity, parent_post_id, created_at")
       .eq("kettle_id", kettle.id)
       .order("created_at", { ascending: false })
       .returns<Post[]>();

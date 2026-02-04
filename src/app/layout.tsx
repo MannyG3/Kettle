@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Archivo } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 
 const archivo = Archivo({
@@ -26,17 +27,25 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <div className="min-h-screen flex flex-col">
-          <header className="border-b border-white/10 bg-charcoal/80 backdrop-blur-2xl">
+          <header className="border-b border-white/10 bg-charcoal/80 backdrop-blur-2xl sticky top-0 z-50">
             <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
-              <div className="flex items-center gap-2">
-                <div className="h-7 w-7 rounded-xl bg-neon-green shadow-[0_0_20px_var(--neon-green)]" />
+              <Link href="/" className="flex items-center gap-2 group">
+                <div className="h-7 w-7 rounded-xl bg-neon-green shadow-[0_0_20px_var(--neon-green)] group-hover:shadow-[0_0_30px_var(--neon-green)] transition-shadow" />
                 <span className="bg-gradient-to-r from-neon-green to-hot-pink bg-clip-text text-lg font-bold text-transparent">
                   Tea
                 </span>
-              </div>
-              <span className="hidden text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400 sm:inline">
-                Anonymous. Chaotic. Real.
-              </span>
+              </Link>
+              <nav className="flex items-center gap-4">
+                <Link
+                  href="/kettles"
+                  className="hidden sm:inline text-xs font-bold text-zinc-400 hover:text-neon-green transition-colors"
+                >
+                  Browse Kettles
+                </Link>
+                <span className="hidden md:inline text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                  Anonymous. Chaotic. Real.
+                </span>
+              </nav>
             </div>
           </header>
 
