@@ -35,8 +35,8 @@ type KettleFeedProps = {
 };
 
 type ExpandedState = {
-  expanded: Set<string>;
-  collapsed: Set<string>;
+  expanded: string[];
+  collapsed: string[];
 };
 
 const container = {
@@ -134,8 +134,8 @@ function PostCard({
   const maxDepth = 5; // Max nesting level for UI
   
   // Determine expansion state
-  const isExplicitlyExpanded = expandedState.expanded.has(post.id);
-  const isExplicitlyCollapsed = expandedState.collapsed.has(post.id);
+  const isExplicitlyExpanded = expandedState.expanded.includes(post.id);
+  const isExplicitlyCollapsed = expandedState.collapsed.includes(post.id);
   
   // Default: expand first 2 levels automatically
   const isDefaultExpanded = depth < 2 && directReplyCount > 0;
@@ -307,25 +307,23 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
   const [posts, setPosts] = useState(initialPosts);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // Proper React state for expansion tracking
+  // Proper React state for expansion tracking - using arrays for proper React diffing
   const [expandedState, setExpandedState] = useState<ExpandedState>({
-    expanded: new Set(),
-    collapsed: new Set()
+    expanded: [],
+    collapsed: []
   });
 
   const handleToggleExpand = useCallback((postId: string, currentlyExpanded: boolean) => {
     setExpandedState(prev => {
-      const newExpanded = new Set(prev.expanded);
-      const newCollapsed = new Set(prev.collapsed);
+      const newExpanded = prev.expanded.filter(id => id !== postId);
+      const newCollapsed = prev.collapsed.filter(id => id !== postId);
       
       if (currentlyExpanded) {
         // Currently expanded -> collapse it
-        newExpanded.delete(postId);
-        newCollapsed.add(postId);
+        newCollapsed.push(postId);
       } else {
         // Currently collapsed -> expand it
-        newCollapsed.delete(postId);
-        newExpanded.add(postId);
+        newExpanded.push(postId);
       }
       
       return { expanded: newExpanded, collapsed: newCollapsed };
@@ -334,10 +332,10 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
 
   const handleExpandPost = useCallback((postId: string) => {
     setExpandedState(prev => {
-      const newExpanded = new Set(prev.expanded);
-      const newCollapsed = new Set(prev.collapsed);
-      newExpanded.add(postId);
-      newCollapsed.delete(postId);
+      const newExpanded = prev.expanded.includes(postId) 
+        ? prev.expanded 
+        : [...prev.expanded, postId];
+      const newCollapsed = prev.collapsed.filter(id => id !== postId);
       return { expanded: newExpanded, collapsed: newCollapsed };
     });
   }, []);
