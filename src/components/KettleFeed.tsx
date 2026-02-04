@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { PourTeaModal } from "@/components/PourTeaModal";
-import { createSupabaseClient } from "@/lib/supabaseClient";
 
 type Kettle = {
   id: string;
@@ -43,80 +42,9 @@ const cardMotion = {
   },
 };
 
-export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
+export function KettleFeed({ kettle, posts }: KettleFeedProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [posts, setPosts] = useState<Post[]>(initialPosts);
-
-  // Sync initial posts if they change (e.g. on hard navigation)
-  useEffect(() => {
-    setPosts(initialPosts);
-  }, [initialPosts]);
-
-  // Real-time subscription
-  useEffect(() => {
-    const supabase = createSupabaseClient();
-    
-    // Subscribe to both INSERT (new posts) and UPDATE (heat changes)
-    const channel = supabase
-      .channel('realtime-posts')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Listen to all events
-          schema: 'public',
-          table: 'posts',
-          filter: `kettle_id=eq.${kettle.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newPost = payload.new as Post;
-            // Optimistically we might have already added it, but let's just prepend if not exists
-            setPosts((current) => {
-              if (current.find((p) => p.id === newPost.id)) return current;
-              return [newPost, ...current];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            const updatedPost = payload.new as Post;
-            setPosts((current) =>
-              current.map((p) => (p.id === updatedPost.id ? updatedPost : p))
-            );
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [kettle.id]);
-
-  const handleHeat = async (postId: string) => {
-    // 1. Optimistic update
-    setPosts((current) =>
-      current.map((p) =>
-        p.id === postId
-          ? { ...p, heat_score: (p.heat_score ?? 0) + 1 }
-          : p
-      )
-    );
-
-    // 2. Call RPC
-    const supabase = createSupabaseClient();
-    const { error } = await supabase.rpc('increment_heat', { post_id: postId });
-    
-    if (error) {
-      console.error("Failed to heat up:", error);
-      // Revert if failed
-      setPosts((current) =>
-        current.map((p) =>
-          p.id === postId
-            ? { ...p, heat_score: (p.heat_score ?? 1) - 1 }
-            : p
-        )
-      );
-    }
-  };
 
   return (
     <motion.div
@@ -252,12 +180,12 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
                       </motion.div>
                       <motion.button
                         type="button"
-                        onClick={() => handleHeat(post.id)}
+                        onClick={() => setIsModalOpen(true)}
                         className="rounded-full border border-neon-green/50 bg-neon-green-dim px-2 py-1 text-[10px] font-bold text-neon-green hover:bg-neon-green/20"
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.97 }}
                       >
-                        Heat Up
+                        Add Tea
                       </motion.button>
                     </div>
                   </div>
@@ -294,12 +222,6 @@ export function KettleFeed({ kettle, posts: initialPosts }: KettleFeedProps) {
           onClose={() => setIsModalOpen(false)}
           kettleId={kettle.id}
           kettleName={kettle.name}
-          onSuccess={(newPost) => {
-            setPosts((current) => {
-              if (current.find((p) => p.id === newPost.id)) return current;
-              return [newPost as Post, ...current];
-            });
-          }}
         />
       </AnimatePresence>
     </motion.div>

@@ -11,7 +11,6 @@ type PourTeaModalProps = {
   onClose: () => void;
   kettleId: string;
   kettleName: string;
-  onSuccess?: (post: any) => void;
 };
 
 export function PourTeaModal({
@@ -19,7 +18,6 @@ export function PourTeaModal({
   onClose,
   kettleId,
   kettleName,
-  onSuccess,
 }: PourTeaModalProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
@@ -65,16 +63,12 @@ export function PourTeaModal({
         imageUrl = publicUrl;
       }
 
-      const { data: newPost, error: insertError } = await supabase
-        .from("posts")
-        .insert({
-          kettle_id: kettleId,
-          content: content.trim(),
-          image_url: imageUrl,
-          heat_score: 0,
-        })
-        .select()
-        .single();
+      const { error: insertError } = await supabase.from("posts").insert({
+        kettle_id: kettleId,
+        content: content.trim(),
+        image_url: imageUrl,
+        heat_score: 0,
+      });
 
       if (insertError) {
         console.error(insertError);
@@ -84,10 +78,6 @@ export function PourTeaModal({
         );
         setIsSubmitting(false);
         return;
-      }
-
-      if (onSuccess && newPost) {
-        onSuccess(newPost);
       }
 
       setContent("");
